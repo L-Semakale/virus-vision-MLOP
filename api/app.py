@@ -1,154 +1,59 @@
-"""
-app.py
-FastAPI backend for Virus Image Classification
-----------------------------------------------
-
-Features:
-- Predict a single uploaded image
-- Upload multiple images for retraining
-- Trigger model retraining
-- Health + uptime endpoints
-"""
-
-import os
-import uvicorn
-import numpy as np
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import JSONResponse
-from datetime import datetime
-from PIL import Image
-import io
+import uvicorn
+import os
+import shutil
+import numpy as np
+from tensorflow.keras.models import load_model
 import joblib
-import tensorflow as tf
+from src.preprocessing import preprocess_single_image
+from src.prediction import predict_image
+from src.retrain import trigger_retraining
 
-# -----------------------------
-# Paths
-# -----------------------------
-MODEL_PATH = "./models/best_model.keras"
-ENCODER_PATH = "./models/label_encoder.pkl"
-RETRAIN_DATA_PATH = "./data/retrain/"
+app = FastAPI(title="Virus Classification API", description="ML Model Inference & Retraining API")
 
-# Ensure retrain folder exists
-os.makedirs(RETRAIN_DATA_PATH, exist_ok=True)
+MODEL_PATH = "models/best_model.keras"
+ENCODER_PATH = "models/label_encoder.pkl"
+UPLOAD_DIR = "uploaded_data"
 
-# -----------------------------
-# Load model and encoder
-# -----------------------------
-try:
-    model = tf.keras.models.load_model(MODEL_PATH)
-    label_encoder = joblib.load(ENCODER_PATH)
-    print("Model & encoder loaded successfully.")
-except:
-    model = None
-    label_encoder = None
-    print("⚠️ Warning: Model not loaded. Retraining required.")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# -----------------------------
-# FastAPI app
-# -----------------------------
-app = FastAPI(
-    title="Virus Image Classification API",
-    description="API for prediction, retraining, and monitoring.",
-    version="1.0.0"
-)
+# Load model & encoder at startup
+model = load_model(MODEL_PATH)
+encoder = joblib.load(ENCODER_PATH)
 
-start_time = datetime.now()
-
-
-# -----------------------------
-# Utility: Preprocess Image
-# -----------------------------
-def preprocess_image(image_bytes):
-    try:
-        image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        image = image.resize((128, 128))
-        arr = np.array(image) / 255.0
-        arr = np.expand_dims(arr, axis=0)
-        return arr
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid image format.")
-
-
-# -----------------------------
-# Endpoint: Healthcheck
-# -----------------------------
-@app.get("/health")
-def health():
-    uptime = datetime.now() - start_time
-    return {
-        "status": "running",
-        "uptime": str(uptime),
-        "model_loaded": model is not None
-    }
-
-
-# -----------------------------
-# Endpoint: Predict
-# -----------------------------
 @app.post("/predict")
-async def predict(file: UploadFile = File(...)):
-    if model is None:
-        raise HTTPException(status_code=500, detail="Model is not loaded.")
+def predict(file: UploadFile = File(...)):
+    """Predict the class of one image."""
+    file_location = f"{UPLOAD_DIR}/{file.filename}"
+    with open(file_location, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
 
-    image_bytes = await file.read()
-    img = preprocess_image(image_bytes)
+    img = preprocess_single_image(file_location)
+    pred_class, conf = predict_image(model, encoder, img)
 
-    preds = model.predict(img)[0]
-    class_idx = np.argmax(preds)
-    class_name = label_encoder.inverse_transform([class_idx])[0]
-    confidence = float(np.max(preds))
+    return {"prediction": pred_class, "confidence": float(conf)}
 
-    return {
-        "filename": file.filename,
-        "predicted_class": class_name,
-        "confidence": confidence
-    }
-
-
-# -----------------------------
-# Endpoint: Upload Images for Retraining
-# -----------------------------
-@app.post("/upload-retrain-data")
-async def upload_retrain_data(files: list[UploadFile] = File(...)):
+@app.post("/upload-bulk")
+def upload_bulk(files: list[UploadFile] = File(...)):
+    """Upload multiple images to be included in retraining dataset."""
     saved_files = []
+    for f in files:
+        path = f"{UPLOAD_DIR}/{f.filename}"
+        with open(path, "wb") as buffer:
+            shutil.copyfileobj(f.file, buffer)
+        saved_files.append(path)
+    return {"uploaded": saved_files, "count": len(saved_files)}
 
-    for file in files:
-        contents = await file.read()
-        save_path = os.path.join(RETRAIN_DATA_PATH, file.filename)
-        with open(save_path, "wb") as f:
-            f.write(contents)
-        saved_files.append(file.filename)
-
-    return {
-        "message": "Files uploaded successfully.",
-        "files_saved": saved_files
-    }
-
-
-# -----------------------------
-# Endpoint: Trigger Retraining
-# -----------------------------
 @app.post("/retrain")
-def retrain_model():
-    """
-    Calls your retraining pipeline.
-    You will implement retraining inside src/retrain.py
-    """
-    try:
-        from src.retrain import retrain_pipeline
+def retrain():
+    """Trigger model retraining using uploaded data."""
+    new_model_path = trigger_retraining()
+    return {"status": "Retraining complete", "model_saved_to": new_model_path}
 
-        result = retrain_pipeline()
-        return {"message": "Retraining completed.", "details": result}
+@app.get("/health")
+def health_check():
+    return {"status": "API running", "model_loaded": bool(model)}
 
-    except Exception as e:
-        return JSONResponse(
-            status_code=500,
-            content={"error": f"Retraining failed: {str(e)}"}
-        )
-
-
-# -----------------------------
-# Run server
-# -----------------------------
 if __name__ == "__main__":
-    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(app, host="0.0.0.0", port=8000)
