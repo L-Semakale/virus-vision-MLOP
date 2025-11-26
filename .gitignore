@@ -1,0 +1,9 @@
+venv/
+*.keras
+*.h5
+*.pb
+*.tflite
+__pycache__/
+*.pkl
+*.joblib
+.DS_Store
