@@ -1,9 +1,8 @@
 venv/
+notebook/models/
 *.keras
 *.h5
 *.pb
-*.tflite
+*.pyd
+*.dll
 __pycache__/
-*.pkl
-*.joblib
-.DS_Store
