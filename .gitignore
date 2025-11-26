@@ -1,5 +1,4 @@
 venv/
-notebook/models/
 *.keras
 *.h5
 *.pb
