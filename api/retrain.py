@@ -1,21 +1,18 @@
 import torch
-import torch.nn as nn
+import threading
 import os
 
-class DummyCNN(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.conv = nn.Conv2d(3, 8, 3)
-        self.fc = nn.Linear(8 * 254 * 254, 2)  # example output
+MODEL_PATH = "model/model.pt"
 
-    def forward(self, x):
-        x = self.conv(x)
-        x = x.view(x.size(0), -1)
-        return self.fc(x)
+def retrain_model():
+    """Fake retraining function."""
+    dummy_model = {"status": "retrained"}
+    os.makedirs("model", exist_ok=True)
+    torch.save(dummy_model, MODEL_PATH)
+    print("Model retrained and saved!")
 
-os.makedirs("model", exist_ok=True)
-
-dummy_model = DummyCNN()
-
-torch.save(dummy_model, "model/model.pt")
-print("model/model.pt created!")
+def retrain_model_background():
+    """Runs retraining in a background thread."""
+    thread = threading.Thread(target=retrain_model)
+    thread.start()
+    return {"message": "Retraining started in background"}
