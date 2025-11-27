@@ -8,7 +8,7 @@ python-multipart
 opencv-python
 matplotlib
 pydantic
-torch==2.2.2+cpu
+torch==2.9.1+cpu
 torchvision==0.17.2+cpu
 torchaudio==2.2.2+cpu
 --extra-index-url https://download.pytorch.org/whl/cpu
