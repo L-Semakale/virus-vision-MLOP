@@ -4,4 +4,4 @@ venv/
 *.pb
 *.pyd
 *.dll
-__pycache__/
+__pycache__/"venv/" 
