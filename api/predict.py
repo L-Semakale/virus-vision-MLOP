@@ -1,31 +1,25 @@
-import torch
-import torch.nn.functional as F
 from fastapi import UploadFile
 from api.model_loader import load_model, prepare_image
 from api.schemas import PredictionResponse
+import torch
+import torch.nn.functional as F
 
-# Load model ONCE (not on every request)
-MODEL = load_model()
-CLASS_NAMES = ["Coronavirus", "Healthy Lung", "Tuberculosis"]  # <-- UPDATE
+# Your class labels (update these for your dataset)
+CLASS_NAMES = ["Adenovirus", "Covid19", "Influenza", "Normal"]
 
 async def predict_image(upload: UploadFile) -> PredictionResponse:
-    # Read image bytes
-    contents = await upload.read()
+    model = load_model()
+    image = prepare_image(upload.file)
 
-    # Preprocess
-    image = prepare_image(contents)
-
-    # Inference
     with torch.no_grad():
-        logits = MODEL(image)
-        probs = F.softmax(logits, dim=1)[0].cpu().numpy()
+        logits = model(image)
+        probs = F.softmax(logits, dim=1)[0].tolist()
 
-    # Get class + confidence
-    idx = int(probs.argmax())
-    predicted_class = CLASS_NAMES[idx]
-    confidence = float(probs[idx])
+    predicted_index = int(torch.argmax(logits, dim=1))
+    predicted_name = CLASS_NAMES[predicted_index]
+    confidence = max(probs)
 
     return PredictionResponse(
-        class_name=predicted_class,
+        class_name=predicted_name,
         confidence=confidence
     )
