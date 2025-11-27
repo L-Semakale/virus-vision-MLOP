@@ -1,19 +1,21 @@
-import threading
-import time
 import torch
+import torch.nn as nn
+import os
 
-def retrain_model_background():
-    thread = threading.Thread(target=retrain)
-    thread.start()
+class DummyCNN(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.conv = nn.Conv2d(3, 8, 3)
+        self.fc = nn.Linear(8 * 254 * 254, 2)  # example output
 
-def retrain():
-    print("Retraining started...")
+    def forward(self, x):
+        x = self.conv(x)
+        x = x.view(x.size(0), -1)
+        return self.fc(x)
 
-    # Simulate training time
-    time.sleep(5)
+os.makedirs("model", exist_ok=True)
 
-    # Example: Save updated weights
-    dummy_model = torch.nn.Linear(10, 2)
-    torch.save(dummy_model, "model/model.pt")
+dummy_model = DummyCNN()
 
-    print("Retraining completed.")
+torch.save(dummy_model, "model/model.pt")
+print("model/model.pt created!")
