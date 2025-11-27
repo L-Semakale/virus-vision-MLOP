@@ -150,6 +150,6 @@ All handled through GitHub Actions.
 
 ##  **Demo Video**
 
-(Your video link will be added here)
+https://youtu.be/TyE2MIqwOZ8
 
 ---
