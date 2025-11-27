@@ -1,6 +1,5 @@
 import 'dart:convert';
-import 'dart:io';
-import 'dart:ui' as ui;
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -14,14 +13,17 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
-  File? _image;
+  XFile? _imageFile;
+  Uint8List? _imageBytes;
+
   String _prediction = "";
-  double _confidence = 0;
+  double _confidence = 0.0;
   bool _isUploading = false;
 
   final ImagePicker _picker = ImagePicker();
-  late AnimationController _confController;
-  late AnimationController _glowController;
+
+  AnimationController? _confController;
+  AnimationController? _glowController;
 
   @override
   void initState() {
@@ -36,25 +38,32 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       vsync: this,
       duration: const Duration(seconds: 2),
       lowerBound: 0.6,
-      upperBound: 1,
+      upperBound: 1.0,
     )..repeat(reverse: true);
   }
 
   @override
   void dispose() {
-    _confController.dispose();
-    _glowController.dispose();
+    _confController?.dispose();
+    _glowController?.dispose();
     super.dispose();
+  }
+
+  /// 🔥 Correct Render.com API URL
+  Uri get _predictUri {
+    return Uri.parse('https://virus-vision-mlop.onrender.com/predict');
   }
 
   Future<void> pickImage() async {
     try {
-      final pickedFile = await _picker.pickImage(source: ImageSource.gallery);
-      if (pickedFile != null) {
+      final picked = await _picker.pickImage(source: ImageSource.gallery);
+      if (picked != null) {
+        final bytes = await picked.readAsBytes();
         setState(() {
-          _image = File(pickedFile.path);
+          _imageFile = picked;
+          _imageBytes = bytes;
           _prediction = "";
-          _confidence = 0;
+          _confidence = 0.0;
         });
       }
     } catch (e) {
@@ -65,71 +74,50 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     }
   }
 
-  Uri get _predictUri {
-    try {
-      if (Platform.isAndroid) {
-        return Uri.parse('http://10.0.2.2:5000/predict');
-      }
-    } catch (_) {}
-    return Uri.parse('http://localhost:5000/predict');
-  }
-
   Future<void> uploadImage() async {
-    if (_image == null) return;
+    if (_imageBytes == null) return;
 
     setState(() {
       _isUploading = true;
       _prediction = "";
-      _confidence = 0;
+      _confidence = 0.0;
     });
 
     try {
-      final request = http.MultipartRequest('POST', _predictUri);
+      final request = http.MultipartRequest("POST", _predictUri);
+
       request.files.add(
-        await http.MultipartFile.fromPath('file', _image!.path),
+        http.MultipartFile.fromBytes(
+          "file",
+          _imageBytes!,
+          filename: _imageFile?.name ?? "image.jpg",
+        ),
       );
 
-      final streamedResponse = await request.send();
-      final responseBody = await streamedResponse.stream.bytesToString();
+      final streamed = await request.send();
+      final response = await streamed.stream.bytesToString();
 
-      if (streamedResponse.statusCode != 200) {
-        throw Exception(
-          'Server error ${streamedResponse.statusCode}: $responseBody',
-        );
+      if (streamed.statusCode != 200) {
+        throw Exception("Server error ${streamed.statusCode}: $response");
       }
 
-      final data = jsonDecode(responseBody);
+      final data = jsonDecode(response);
 
-      final className = data['class']?.toString() ?? 'Unknown';
-      double confidenceNum = 0.0;
-      try {
-        if (data['confidence'] is num) {
-          confidenceNum = (data['confidence'] as num).toDouble();
-        } else {
-          confidenceNum =
-              double.tryParse(data['confidence']?.toString() ?? '') ?? 0.0;
-        }
-      } catch (_) {
-        confidenceNum = 0.0;
-      }
-      confidenceNum = confidenceNum.clamp(0.0, 1.0);
-
-      if (!mounted) return;
+      /// UPDATED FIELD NAMES
       setState(() {
-        _prediction = className;
-        _confidence = confidenceNum;
+        _prediction = data["class_name"]?.toString() ?? "Unknown";
+        _confidence = (data["confidence"] is num ? data["confidence"] : 0.0)
+            .toDouble();
       });
 
-      _confController.forward(from: 0);
+      _confController?.forward(from: 0);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Prediction failed: $e')));
     } finally {
-      if (mounted) {
-        setState(() => _isUploading = false);
-      }
+      if (mounted) setState(() => _isUploading = false);
     }
   }
 
@@ -137,31 +125,16 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     if (_prediction.isEmpty) return const SizedBox.shrink();
 
     return FadeTransition(
-      opacity: _confController,
+      opacity: _confController ?? AlwaysStoppedAnimation<double>(1.0),
       child: Container(
         margin: const EdgeInsets.symmetric(vertical: 20),
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
           gradient: LinearGradient(
-            colors: [
-              Colors.cyan.shade700.withOpacity(0.7),
-              Colors.blue.shade900.withOpacity(0.9),
-            ],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
+            colors: [Colors.cyan.shade800, Colors.blue.shade900],
           ),
           borderRadius: BorderRadius.circular(25),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.cyanAccent.withOpacity(0.6),
-              blurRadius: 15,
-              spreadRadius: 1,
-            ),
-          ],
-          border: Border.all(
-            color: Colors.cyanAccent.withOpacity(0.8),
-            width: 1.5,
-          ),
+          border: Border.all(color: Colors.cyanAccent, width: 2),
         ),
         child: Column(
           children: [
@@ -171,28 +144,22 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 fontSize: 28,
                 fontWeight: FontWeight.bold,
                 color: Colors.white,
-                shadows: [Shadow(blurRadius: 5, color: Colors.cyanAccent)],
               ),
             ),
             const SizedBox(height: 15),
-            AnimatedBuilder(
-              animation: _confController,
-              builder: (context, child) {
-                return LinearProgressIndicator(
-                  value: _confidence * _confController.value,
-                  minHeight: 16,
-                  backgroundColor: Colors.white12,
-                  color: Colors.cyanAccent,
-                );
-              },
+            LinearProgressIndicator(
+              value: _confidence,
+              minHeight: 14,
+              color: Colors.cyanAccent,
+              backgroundColor: Colors.white24,
             ),
             const SizedBox(height: 10),
             Text(
-              '${(_confidence * 100).toStringAsFixed(2)}%',
+              '${(_confidence * 100).toStringAsFixed(1)}%',
               style: const TextStyle(
                 fontSize: 18,
                 color: Colors.cyanAccent,
-                fontWeight: FontWeight.w600,
+                fontWeight: FontWeight.w700,
               ),
             ),
           ],
@@ -201,28 +168,27 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     );
   }
 
-  Widget buildGlowingButton({
+  Widget glowingButton({
     required IconData icon,
     required String label,
     required VoidCallback? onPressed,
-    required Color glowColor,
+    required Color color,
   }) {
     return ScaleTransition(
-      scale: _glowController,
+      scale: _glowController ?? AlwaysStoppedAnimation<double>(1.0),
       child: ElevatedButton.icon(
         onPressed: onPressed,
-        icon: Icon(icon, color: glowColor),
-        label: Text(label, style: TextStyle(color: glowColor)),
+        icon: Icon(icon, color: color),
+        label: Text(label),
         style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.black87,
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+          backgroundColor: Colors.black,
+          foregroundColor: color,
+          padding: const EdgeInsets.symmetric(horizontal: 26, vertical: 14),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(30),
-            side: BorderSide(color: glowColor, width: 2),
+            side: BorderSide(color: color),
           ),
-          shadowColor: glowColor.withOpacity(0.8),
-          elevation: 15,
-          textStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          elevation: 10,
         ),
       ),
     );
@@ -231,107 +197,62 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF070A1F),
+      backgroundColor: const Color(0xff061227),
       appBar: AppBar(
         title: const Text(
-          '🧬 Virus Classifier',
-          style: TextStyle(
-            color: Colors.cyanAccent,
-            fontWeight: FontWeight.bold,
-            fontSize: 22,
-            shadows: [Shadow(color: Colors.cyanAccent, blurRadius: 10)],
-          ),
+          "🧬 Virus Classifier",
+          style: TextStyle(color: Colors.cyanAccent),
         ),
+        backgroundColor: Colors.black,
         centerTitle: true,
-        backgroundColor: Colors.black87,
-        elevation: 0,
       ),
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [
-              const Color(0xFF001024),
-              const Color(0xFF001F4D),
-              const Color(0xFF003366),
-            ],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 30),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
         child: Center(
-          child: SingleChildScrollView(
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(30),
-              child: BackdropFilter(
-                filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-                child: Container(
-                  padding: const EdgeInsets.all(25),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.07),
-                    borderRadius: BorderRadius.circular(30),
-                    border: Border.all(
-                      color: Colors.cyanAccent.withOpacity(0.3),
-                      width: 1.5,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.cyanAccent.withOpacity(0.25),
-                        blurRadius: 25,
-                        spreadRadius: 1,
-                        offset: const Offset(0, 10),
+          child: Column(
+            children: [
+              AnimatedSwitcher(
+                duration: const Duration(milliseconds: 400),
+                child: _imageBytes == null
+                    ? Icon(
+                        Icons.image_outlined,
+                        size: 180,
+                        color: Colors.cyanAccent.withOpacity(0.6),
+                        key: const ValueKey("placeholder"),
+                      )
+                    : ClipRRect(
+                        borderRadius: BorderRadius.circular(20),
+                        child: Image.memory(
+                          _imageBytes!,
+                          height: 230,
+                          fit: BoxFit.cover,
+                          key: const ValueKey("image"),
+                        ),
                       ),
-                    ],
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      AnimatedSwitcher(
-                        duration: const Duration(milliseconds: 400),
-                        child: _image == null
-                            ? Icon(
-                                Icons.image_outlined,
-                                size: 160,
-                                color: Colors.cyanAccent.withOpacity(0.7),
-                                key: const ValueKey('placeholder'),
-                              )
-                            : ClipRRect(
-                                borderRadius: BorderRadius.circular(25),
-                                child: Image.file(
-                                  _image!,
-                                  height: 230,
-                                  fit: BoxFit.cover,
-                                  key: const ValueKey('image'),
-                                ),
-                              ),
-                      ),
-                      const SizedBox(height: 30),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          buildGlowingButton(
-                            icon: Icons.photo_library,
-                            label: 'Pick Image',
-                            onPressed: _isUploading ? null : pickImage,
-                            glowColor: Colors.cyanAccent,
-                          ),
-                          const SizedBox(width: 25),
-                          buildGlowingButton(
-                            icon: Icons.analytics,
-                            label: _isUploading ? 'Predicting...' : 'Predict',
-                            onPressed: (_image == null || _isUploading)
-                                ? null
-                                : uploadImage,
-                            glowColor: Colors.lightBlueAccent,
-                          ),
-                        ],
-                      ),
-                      buildPredictionCard(),
-                    ],
-                  ),
-                ),
               ),
-            ),
+              const SizedBox(height: 30),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  glowingButton(
+                    icon: Icons.photo,
+                    label: "Pick Image",
+                    onPressed: _isUploading ? null : pickImage,
+                    color: Colors.cyanAccent,
+                  ),
+                  const SizedBox(width: 25),
+                  glowingButton(
+                    icon: Icons.analytics,
+                    label: _isUploading ? "Predicting..." : "Predict",
+                    onPressed: (_imageBytes == null || _isUploading)
+                        ? null
+                        : uploadImage,
+                    color: Colors.lightBlueAccent,
+                  ),
+                ],
+              ),
+              buildPredictionCard(),
+            ],
           ),
         ),
       ),
